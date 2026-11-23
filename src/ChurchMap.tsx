@@ -126,13 +126,41 @@ export default function ChurchMap(props: Props) {
     const drag = React.useRef<null | { x: number; y: number; v: number[]; moved: boolean }>(null)
     const dragged = React.useRef(false)
     const zoomedIn = view[2] < W - 1
+    // pinch: two fingers on a phone; keeps the point between the fingers under the fingers
+    const ptrs = React.useRef(new Map<number, { x: number; y: number }>())
+    const pinch = React.useRef<null | { d: number; v: number[]; fx: number; fy: number }>(null)
+    const pinchState = () => {
+        const [a, b] = Array.from(ptrs.current.values())
+        return { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 }
+    }
     const onDown = (e: React.PointerEvent) => {
-        if (!zoomedIn) return
+        ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        const el = svgRef.current
+        if (ptrs.current.size === 2 && el) {
+            cancelAnimationFrame(anim.current)
+            drag.current = null
+            const r = el.getBoundingClientRect(), p = pinchState()
+            pinch.current = { d: p.d, v: view.slice(), fx: (p.mx - r.left) / r.width, fy: (p.my - r.top) / r.height }
+            dragged.current = true
+            ptrs.current.forEach((_, id) => { try { el.setPointerCapture(id) } catch {} })
+            return
+        }
+        if (!zoomedIn || ptrs.current.size > 1) return
         cancelAnimationFrame(anim.current)
         drag.current = { x: e.clientX, y: e.clientY, v: view.slice(), moved: false }
         dragged.current = false
     }
     const onMove = (e: React.PointerEvent) => {
+        if (ptrs.current.has(e.pointerId)) ptrs.current.set(e.pointerId, { x: e.clientX, y: e.clientY })
+        const pc = pinch.current, svgEl = svgRef.current
+        if (pc && svgEl && ptrs.current.size >= 2) {
+            const r = svgEl.getBoundingClientRect(), p = pinchState()
+            const w = Math.min(W, Math.max(W / 10, (pc.v[2] * pc.d) / p.d)), h = (w * H) / W
+            const wx = pc.v[0] + pc.fx * pc.v[2], wy = pc.v[1] + pc.fy * pc.v[3]
+            const nfx = (p.mx - r.left) / r.width, nfy = (p.my - r.top) / r.height
+            setView(clampView([wx - nfx * w, wy - nfy * h, w, h]))
+            return
+        }
         const d = drag.current, el = svgRef.current
         if (!d || !el) return
         const dx = e.clientX - d.x, dy = e.clientY - d.y
@@ -141,7 +169,30 @@ export default function ChurchMap(props: Props) {
         const k = d.v[2] / el.getBoundingClientRect().width
         setView(clampView([d.v[0] - dx * k, d.v[1] - dy * k, d.v[2], d.v[3]]))
     }
-    const onUp = () => { drag.current = null; setTimeout(() => (dragged.current = false), 0) }
+    const onUp = (e: React.PointerEvent) => {
+        ptrs.current.delete(e.pointerId)
+        if (ptrs.current.size < 2) pinch.current = null
+        if (ptrs.current.size === 0) { drag.current = null; setTimeout(() => (dragged.current = false), 0) }
+        else drag.current = null
+    }
+    // trackpad pinch on laptops arrives as ctrl+wheel; plain scrolling still scrolls the page
+    const viewRef = React.useRef(view)
+    viewRef.current = view
+    React.useEffect(() => {
+        const el = svgRef.current
+        if (!el) return
+        const onWheel = (e: WheelEvent) => {
+            if (!e.ctrlKey) return
+            e.preventDefault()
+            cancelAnimationFrame(anim.current)
+            const v = viewRef.current, r = el.getBoundingClientRect()
+            const fx = (e.clientX - r.left) / r.width, fy = (e.clientY - r.top) / r.height
+            const w = Math.min(W, Math.max(W / 10, v[2] * Math.exp(e.deltaY * 0.01))), h = (w * H) / W
+            setView(clampView([v[0] + fx * v[2] - fx * w, v[1] + fy * v[3] - fy * h, w, h]))
+        }
+        el.addEventListener("wheel", onWheel, { passive: false })
+        return () => el.removeEventListener("wheel", onWheel)
+    }, [])
 
     const near = React.useMemo(() => {
         if (!origin) return null
