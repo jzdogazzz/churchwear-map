@@ -47,6 +47,8 @@ interface Props {
     accent: string
     ctaLabel: string
     ctaLink: string
+    bodyFont?: React.CSSProperties
+    labelFont?: React.CSSProperties
     style?: React.CSSProperties
 }
 
@@ -55,7 +57,7 @@ interface Props {
  * @framerSupportedLayoutHeight auto
  */
 export default function ChurchMap(props: Props) {
-    const { variant, ink, paper, land, landActive, accent, ctaLabel, ctaLink, style } = props
+    const { variant, ink, paper, land, landActive, accent, ctaLabel, ctaLink, bodyFont, labelFont, style } = props
     const full = variant === "Full page"
     const [feed, setFeed] = React.useState<Feed>(feedCache || FALLBACK)
     const [width, setWidth] = React.useState(1000)
@@ -66,6 +68,7 @@ export default function ChurchMap(props: Props) {
     const [active, setActive] = React.useState<number | null>(null)
     const [view, setView] = React.useState([0, 0, W, H])
     const [query, setQuery] = React.useState("")
+    const [open, setOpen] = React.useState<Record<string, boolean>>({})
     const rootRef = React.useRef<HTMLDivElement>(null)
     const anim = React.useRef(0)
 
@@ -138,9 +141,10 @@ export default function ChurchMap(props: Props) {
         flyTo(fit(pins.filter((p) => p.s === s).map((p) => p.xy), 70))
     }
 
-    const mono: React.CSSProperties = { fontFamily: '"Spline Sans Mono", ui-monospace, monospace', fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }
-    const serif: React.CSSProperties = { fontFamily: '"CHURCH WEAR", Georgia, serif', letterSpacing: "-0.02em" }
-    const r = 4.6 / Math.sqrt(zoom)
+    const mono: React.CSSProperties = { fontFamily: (labelFont && labelFont.fontFamily) || '"Spline Sans Mono", ui-monospace, monospace', fontWeight: 400, fontSize: 12, letterSpacing: "0.08em", textTransform: "uppercase" }
+    const serif: React.CSSProperties = { fontFamily: (bodyFont && bodyFont.fontFamily) || '"CHURCH WEAR Regular", "CHURCH WEAR", sans-serif', fontWeight: 400, letterSpacing: "-0.02em" }
+    const mapPx = stacked ? width : Math.max(200, width - 380)
+    const r = Math.max(4.6 / Math.sqrt(zoom), (3.4 * view[2]) / mapPx)
     const act = active !== null ? pins[active] : null
     const listForState = stateSel ? pins.filter((p) => p.s === stateSel).sort((a, b) => a.c.localeCompare(b.c) || a.n.localeCompare(b.n)) : []
 
@@ -180,7 +184,7 @@ export default function ChurchMap(props: Props) {
             )}
             {!near && !stateSel && !msg && (
                 <div style={{ ...serif, fontSize: 16, lineHeight: 1.4, color: accent }}>
-                    {feed.churches} churches across {nStates} states. Type your ZIP or tap a state to see who's near you.
+                    Type your ZIP or tap a state to see churches near you.
                 </div>
             )}
             {(near || stateSel) && <button onClick={reset} style={{ ...mono, alignSelf: "flex-start", background: "none", border: "none", padding: 0, color: ink, textDecoration: "underline", cursor: "pointer" }}>Show all churches</button>}
@@ -241,11 +245,14 @@ export default function ChurchMap(props: Props) {
                         <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search by church, city or state" aria-label="Search churches"
                             style={{ ...serif, height: 44, width: stacked ? "100%" : 320, padding: "0 14px", fontSize: 16, color: ink, background: paper, border: `1px solid ${ink}`, borderRadius: 0, outline: "none" }} />
                     </div>
-                    <div style={{ columnWidth: 260, columnGap: 40 }}>
+                    <div style={stacked ? {} : { columnWidth: 260, columnGap: 40 }}>
                         {directory.map((g) => (
-                            <div key={g.s} style={{ breakInside: "avoid", marginBottom: 28 }}>
-                                <div style={{ ...mono, fontSize: 11, color: accent, paddingBottom: 8, borderBottom: `1px solid ${ink}` }}>{NAMES[g.s]}</div>
-                                {g.list.map((p) => (
+                            <div key={g.s} style={{ breakInside: "avoid", marginBottom: stacked ? 0 : 28 }}>
+                                <div onClick={() => stacked && setOpen((o) => ({ ...o, [g.s]: !o[g.s] }))}
+                                    style={{ ...mono, fontSize: 11, color: stacked ? ink : accent, padding: stacked ? "14px 0" : "0 0 8px", borderBottom: `1px solid ${stacked ? land : ink}`, display: "flex", justifyContent: "space-between", cursor: stacked ? "pointer" : "default" }}>
+                                    <span>{NAMES[g.s]}</span>{stacked && <span style={{ color: accent }}>{g.list.length} {open[g.s] || q ? "−" : "+"}</span>}
+                                </div>
+                                {(!stacked || open[g.s] || q) && g.list.map((p) => (
                                     <div key={p.i} style={{ padding: "8px 0", borderBottom: `1px solid ${land}` }}>
                                         {p.w ? <a href={p.w} target="_blank" rel="noopener nofollow" style={{ ...serif, fontSize: 15, color: ink, textDecoration: "none" }}>{p.n}</a>
                                             : <span style={{ ...serif, fontSize: 15 }}>{p.n}</span>}
@@ -273,4 +280,6 @@ addPropertyControls(ChurchMap, {
     land: { type: ControlType.Color, title: "States", defaultValue: "#EEEEEE" },
     landActive: { type: ControlType.Color, title: "Selected", defaultValue: "#CCCCCC" },
     accent: { type: ControlType.Color, title: "Muted Text", defaultValue: "#666666" },
+    bodyFont: { type: ControlType.Font, title: "Body Font", controls: "basic", defaultFontType: "sans-serif" },
+    labelFont: { type: ControlType.Font, title: "Label Font", controls: "basic", defaultFontType: "monospace" },
 })
