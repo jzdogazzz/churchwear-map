@@ -113,6 +113,35 @@ export default function ChurchMap(props: Props) {
         return [cx - w / 2, cy - h / 2, w, h]
     }
     const reset = () => { setOrigin(null); setStateSel(null); setActive(null); setMsg(""); setZip(""); flyTo([0, 0, W, H]) }
+    // manual zoom + drag-to-pan
+    const clampView = (v: number[]) => {
+        const w = Math.min(W, Math.max(W / 10, v[2])), h = (w * H) / W
+        return [Math.min(W - w, Math.max(0, v[0])), Math.min(H - h, Math.max(0, v[1])), w, h]
+    }
+    const zoomBy = (f: number) => {
+        const cx = view[0] + view[2] / 2, cy = view[1] + view[3] / 2, w = Math.min(W, Math.max(W / 10, view[2] / f)), h = (w * H) / W
+        flyTo(clampView([cx - w / 2, cy - h / 2, w, h]))
+    }
+    const svgRef = React.useRef<SVGSVGElement>(null)
+    const drag = React.useRef<null | { x: number; y: number; v: number[]; moved: boolean }>(null)
+    const dragged = React.useRef(false)
+    const zoomedIn = view[2] < W - 1
+    const onDown = (e: React.PointerEvent) => {
+        if (!zoomedIn) return
+        cancelAnimationFrame(anim.current)
+        drag.current = { x: e.clientX, y: e.clientY, v: view.slice(), moved: false }
+        dragged.current = false
+    }
+    const onMove = (e: React.PointerEvent) => {
+        const d = drag.current, el = svgRef.current
+        if (!d || !el) return
+        const dx = e.clientX - d.x, dy = e.clientY - d.y
+        if (!d.moved && Math.hypot(dx, dy) < 5) return
+        if (!d.moved) { d.moved = true; dragged.current = true; try { el.setPointerCapture(e.pointerId) } catch {} }
+        const k = d.v[2] / el.getBoundingClientRect().width
+        setView(clampView([d.v[0] - dx * k, d.v[1] - dy * k, d.v[2], d.v[3]]))
+    }
+    const onUp = () => { drag.current = null; setTimeout(() => (dragged.current = false), 0) }
 
     const near = React.useMemo(() => {
         if (!origin) return null
@@ -136,7 +165,7 @@ export default function ChurchMap(props: Props) {
         flyTo(fit([xy, ...d.map((x) => x.p.xy)], 50))
     }
     const pickState = (s: string) => {
-        if (!perState[s]) return
+        if (!perState[s] || dragged.current) return
         setOrigin(null); setActive(null); setMsg(""); setStateSel(s)
         flyTo(fit(pins.filter((p) => p.s === s).map((p) => p.xy), 70))
     }
@@ -199,7 +228,8 @@ export default function ChurchMap(props: Props) {
 
     const map = (
         <div style={{ position: "relative", flex: 1, minWidth: 0, width: "100%" }}>
-            <svg viewBox={view.join(" ")} style={{ display: "block", width: "100%", height: "auto", aspectRatio: `${W} / ${H}`, touchAction: "pan-y", userSelect: "none" }}
+            <svg ref={svgRef} viewBox={view.join(" ")} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}
+                style={{ display: "block", width: "100%", height: "auto", aspectRatio: `${W} / ${H}`, touchAction: zoomedIn ? "none" : "pan-y", userSelect: "none", cursor: zoomedIn ? "grab" : "default" }}
                 role="img" aria-label={`Map of ${feed.churches} churches Church Wear has made merch for`} onClick={(e) => { if (e.target === e.currentTarget) setActive(null) }}>
                 <g>
                     {Object.entries(STATES).map(([s, d]) => (
@@ -212,10 +242,26 @@ export default function ChurchMap(props: Props) {
                 <g>
                     {pins.map((p) => (
                         <circle key={p.i} cx={p.xy[0]} cy={p.xy[1]} r={active === p.i ? r * 1.7 : r} fill={ink} stroke={paper} strokeWidth={1.2} vectorEffect="non-scaling-stroke"
-                            style={{ cursor: "pointer" }} onMouseEnter={() => setActive(p.i)} onClick={(e) => { e.stopPropagation(); setActive(p.i) }} />
+                            style={{ cursor: "pointer" }} onMouseEnter={() => setActive(p.i)} onClick={(e) => { e.stopPropagation(); if (!dragged.current) setActive(p.i) }} />
                     ))}
                 </g>
             </svg>
+            <div style={{ position: "absolute", top: 8, right: 8, display: "flex", flexDirection: "column", gap: 0, zIndex: 3 }}>
+                {[
+                    { k: "in", label: "Zoom in", on: () => zoomBy(1.8), dis: view[2] <= W / 10 + 1, icon: <path d="M7 1v12M1 7h12" /> },
+                    { k: "out", label: "Zoom out", on: () => zoomBy(1 / 1.8), dis: !zoomedIn, icon: <path d="M1 7h12" /> },
+                ].map((b, i) => (
+                    <button key={b.k} type="button" aria-label={b.label} onClick={b.on} disabled={b.dis}
+                        style={{ width: 36, height: 36, display: "flex", alignItems: "center", justifyContent: "center", padding: 0, background: paper, border: `1px solid ${ink}`, borderTop: i ? "none" : `1px solid ${ink}`, borderRadius: 0, cursor: b.dis ? "default" : "pointer", opacity: b.dis ? 0.35 : 1 }}>
+                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke={ink} strokeWidth="1.5">{b.icon}</svg>
+                    </button>
+                ))}
+            </div>
+            {zoomedIn && (
+                <button type="button" onClick={reset} style={{ ...mono, fontSize: 11, position: "absolute", left: 8, top: 8, zIndex: 3, height: 36, padding: "0 12px", background: paper, color: ink, border: `1px solid ${ink}`, borderRadius: 0, cursor: "pointer" }}>
+                    ← Full map
+                </button>
+            )}
             {act && tipLeft >= 0 && tipLeft <= 100 && tipTop >= 0 && tipTop <= 100 && (
                 <div style={{ position: "absolute", left: `${Math.min(Math.max(tipLeft, 18), 82)}%`, top: `${tipTop}%`, transform: tipTop > 40 ? "translate(-50%, calc(-100% - 12px))" : "translate(-50%, 12px)",
                     background: paper, border: `1px solid ${ink}`, padding: "10px 12px", pointerEvents: "auto", maxWidth: 240, zIndex: 2 }}>
